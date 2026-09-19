@@ -5,6 +5,15 @@
   "description": "OpenCode V2 sidebar: month-to-date token/cost usage, OpenCode Go quota windows, and Zen credit balance.",
   "type": "module",
   "license": "MIT",
+  "author": "gpokat",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpokat/opencode-quota-sidebar.git"
+  },
+  "homepage": "https://github.com/gpokat/opencode-quota-sidebar#readme",
+  "bugs": {
+    "url": "https://github.com/gpokat/opencode-quota-sidebar/issues"
+  },
   "exports": {
     "./tui": "./src/tui.tsx"
   },
