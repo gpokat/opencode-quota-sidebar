@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "opencode-quota-sidebar",
+  "version": "0.2.0",
+  "description": "OpenCode V2 sidebar: month-to-date token/cost usage, OpenCode Go quota windows, and Zen credit balance.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./tui": "./src/tui.tsx"
+  },
+  "files": [
+    "src",
+    "tui.tsx",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "tui",
+    "sidebar",
+    "quota",
+    "usage",
+    "tokens",
+    "credits",
+    "opencode-go",
+    "opencode-zen"
+  ],
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.0.0",
+    "@opentui/core": ">=0.5.10",
+    "@opentui/solid": ">=0.5.10",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    },
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  }
+}
