@@ -7,8 +7,8 @@ block:
 - **OpenCode Go quota** — rolling 5h / weekly / monthly percentage bars
 - **Zen credit balance** — remaining account balance in dollars
 
-No third-party dependencies. It uses only APIs and built-ins already present in
-the OpenCode (Bun) runtime.
+No third-party runtime dependencies. It uses only APIs and built-ins already
+present in the OpenCode (Bun) runtime.
 
 ```
 USAGE · Sep 2026
@@ -38,31 +38,25 @@ still separated.
 
 The plugin is TUI-only, so it is configured in `cli.json`.
 
-### From npm
+### One command
 
 ```sh
-cd ~/.config/opencode
-npm install opencode-quota-sidebar
+npx opencode-quota-sidebar
 ```
 
-```json
-{
-  "plugins": ["opencode-quota-sidebar"]
-}
-```
+The installer adds `opencode-quota-sidebar` to
+`~/.config/opencode/cli.json` and, when the `opencode` CLI is on your `PATH`,
+installs the package with `opencode plugin add`. Restart OpenCode afterwards.
 
-Or let the CLI do both steps:
+### With the OpenCode CLI
 
 ```sh
 opencode plugin add opencode-quota-sidebar
 ```
 
-### From a local checkout
+### Manual
 
-```sh
-cd ~/.config/opencode
-npm install /absolute/path/to/opencode-quota-sidebar
-```
+Add the package to the `plugins` array in `~/.config/opencode/cli.json`:
 
 ```json
 {
@@ -70,13 +64,27 @@ npm install /absolute/path/to/opencode-quota-sidebar
 }
 ```
 
-Or reference the checkout directly:
+OpenCode installs configured package plugins on startup.
+
+### From a local checkout
+
+```sh
+cd /path/to/opencode-quota-sidebar
+npm install
+npm run build
+```
+
+Then point `cli.json` at the checkout:
 
 ```json
 {
   "plugins": ["file:///absolute/path/to/opencode-quota-sidebar"]
 }
 ```
+
+OpenCode's local file loader can also transform the TypeScript source directly,
+so `file:///absolute/path/to/opencode-quota-sidebar/tui.tsx` works without a
+build step while developing.
 
 ### As a discovered local plugin
 
@@ -122,11 +130,13 @@ configuration is required if the `opencode-go` provider is already connected.
 - The console OAuth token is stored in a **user-private file**:
   `$XDG_STATE_HOME/opencode/quota-sidebar/auth.json`
   (default `~/.local/state/opencode/quota-sidebar/auth.json`), created with mode
-  `0600` in a `0700` directory.
+  `0600` in a `0700` directory. On Windows the mode flags are best-effort and
+  the file inherits the user profile's ACLs.
 - To sign out or revoke, delete that file (or remove the plugin).
 - Diagnostics are **off by default**. Set `QUOTA_DEBUG=1` to write
-  `/tmp/opencode-quota-debug.log` (mode `0600`); it contains only HTTP statuses
-  and the billing response, never tokens.
+  `opencode-quota-debug.log` in the system temporary directory (`os.tmpdir()`),
+  created with mode `0600`; it contains only HTTP statuses and the billing
+  response, never tokens.
 
 See [SECURITY.md](./SECURITY.md).
 
@@ -147,21 +157,43 @@ See [SECURITY.md](./SECURITY.md).
 
 ## Development
 
-The plugin is shipped as TypeScript (`src/tui.tsx`) and loaded by OpenCode's Bun
-runtime. `@opencode/plugin/tui` is resolved by OpenCode at runtime, so there is
-no build step and no runtime dependency to install.
+`src/tui.tsx` is the source of truth. The published package ships a precompiled
+`dist/tui.js` because OpenCode's package loader executes TypeScript from
+`node_modules` with the default React JSX transform, which fails with
+`Cannot find package 'react'`. The build compiles the JSX with the Solid
+runtime (`jsxImportSource: "@opentui/solid"`) and leaves
+`@opencode/plugin/tui` and `@opentui/solid/jsx-runtime` external; OpenCode
+provides both at runtime.
 
 ```sh
-# type-check (optional; requires dev deps)
-npm install -D typescript @types/bun @opentui/core @opentui/solid @opencode/plugin
-npx tsc --noEmit
+npm install
+npm run build       # writes dist/tui.js
+npm run typecheck   # optional
+npm pack            # runs the build again via prepack
+```
+
+The runtime layout OpenCode loads:
+
+```text
+opencode-quota-sidebar
+├── dist/tui.js      # compiled entry (exports["./tui"])
+├── src/tui.tsx      # source
+└── tui.tsx          # local-development re-export
 ```
 
 ## Uninstall
 
-Remove the entry from `cli.json` (or run `opencode plugin remove
-opencode-quota-sidebar`), restart OpenCode, then delete
-`$XDG_STATE_HOME/opencode/quota-sidebar/`.
+```sh
+npx opencode-quota-sidebar uninstall
+```
+
+or
+
+```sh
+opencode plugin remove opencode-quota-sidebar
+```
+
+Then delete `$XDG_STATE_HOME/opencode/quota-sidebar/` (`~/.local/state/opencode/quota-sidebar/`).
 
 ## License
 

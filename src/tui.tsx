@@ -98,10 +98,10 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /** Diagnostics for the console login/billing path. Enabled with QUOTA_DEBUG=1. */
 function debugLog(message: string) {
   if (!process.env.QUOTA_DEBUG) return
-  void import("node:fs")
-    .then(({ appendFileSync }) => {
+  void Promise.all([import("node:fs"), import("node:os"), import("node:path")])
+    .then(([{ appendFileSync }, { tmpdir }, { join }]) => {
       try {
-        appendFileSync("/tmp/opencode-quota-debug.log", `${new Date().toISOString()} ${message}\n`, {
+        appendFileSync(join(tmpdir(), "opencode-quota-debug.log"), `${new Date().toISOString()} ${message}\n`, {
           mode: 0o600,
         })
       } catch {
@@ -143,11 +143,13 @@ async function migrateLegacyTokens(): Promise<void> {
     )
     const parsed = JSON.parse(await readFile(legacy, "utf8")) as Partial<StoredTokens>
     if (parsed?.refreshToken) {
-      await saveTokens({
+      const saved = await saveTokens({
         accessToken: typeof parsed.accessToken === "string" ? parsed.accessToken : "",
         refreshToken: parsed.refreshToken,
         expires: typeof parsed.expires === "number" ? parsed.expires : 0,
       })
+      // Keep the legacy file if the new location could not be written.
+      if (!saved) return
     }
     await rm(legacy, { force: true })
   } catch {
@@ -169,7 +171,7 @@ async function readTokens(): Promise<StoredTokens> {
   }
 }
 
-async function saveTokens(tokens: StoredTokens): Promise<void> {
+async function saveTokens(tokens: StoredTokens): Promise<boolean> {
   try {
     const path = await import("node:path")
     const { mkdir, writeFile, chmod } = await import("node:fs/promises")
@@ -177,8 +179,10 @@ async function saveTokens(tokens: StoredTokens): Promise<void> {
     await mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
     await writeFile(file, JSON.stringify(tokens), { mode: 0o600 })
     await chmod(file, 0o600)
+    return true
   } catch {
-    // persistence is best-effort
+    // persistence is best-effort (mode flags are a no-op on Windows)
+    return false
   }
 }
 
