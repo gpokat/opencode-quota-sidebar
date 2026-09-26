@@ -1,77 +1,58 @@
 # opencode-quota-sidebar
 
-An [OpenCode](https://opencode.ai) V2 sidebar plugin that shows, in one compact
-block:
-
-- **Month-to-date tokens** — input, output, cache, and API-equivalent cost
-- **OpenCode Go quota** — rolling 5h / weekly / monthly percentage bars
-- **Zen credit balance** — remaining account balance in dollars
-
-No third-party runtime dependencies. It uses only APIs and built-ins already
-present in the OpenCode (Bun) runtime.
+OpenCode V2 sidebar plugin: month-to-date tokens/cost, OpenCode Go quota
+(rolling 5h / weekly / monthly) with reset countdowns, and the Zen credit
+balance.
 
 ```
 USAGE · Sep 2026
-in       116.6K
-out       20.1K
-cache      5.8M
-cost     $0.069
+in         2.4M
+out      415.3K
+cache    232.1M
+cost      $1.74
 
 QUOTA SPEND
-5h       0% ▄▄▄▄▄▄▄▄▄▄▄▄
-week    44% ▄▄▄▄▄▄▄▄▄▄▄▄
-month  100% ▄▄▄▄▄▄▄▄▄▄▄▄
-credit    $9.04
+5h      3% ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ 2h17m
+week    2% ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ 1d5h
+month   1% ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ 23d23h
+credit    $8.29
 ```
 
-Bars fill the measured sidebar width, resize with the terminal, and use only
-your theme's text colors. They are half-height (`▄`), so they are compact while
-still separated.
+## Setup
 
-## Requirements
+1. **Install the plugin** (OpenCode V2):
 
-- OpenCode **V2** (`opencode --version` ≥ 2.0.0)
-- An authenticated **OpenCode Go** provider (for the quota bars)
-- A one-time **`/quota-login`** for the credit balance
+   ```sh
+   opencode plugin add opencode-quota-sidebar
+   ```
 
-## Install
+   Or add it to the global `~/.config/opencode/cli.json` yourself:
 
-The plugin is TUI-only, so it is configured in `cli.json`.
+   ```json
+   {
+     "plugins": ["opencode-quota-sidebar"]
+   }
+   ```
 
-### One command
+2. **Connect the OpenCode Go provider** so the quota bars have data:
 
-```sh
-npx opencode-quota-sidebar
-```
+   ```sh
+   opencode auth login    # choose OpenCode Go
+   ```
 
-The installer adds `opencode-quota-sidebar` to
-`~/.config/opencode/cli.json` and, when the `opencode` CLI is on your `PATH`,
-installs the package with `opencode plugin add`. Restart OpenCode afterwards.
+3. **Sign in to the Zen console once** for the credit balance, from the TUI:
 
-### With the OpenCode CLI
+   ```
+   /quota-login
+   ```
 
-```sh
-opencode plugin add opencode-quota-sidebar
-```
-
-### Manual
-
-Add the package to the `plugins` array in `~/.config/opencode/cli.json`:
-
-```json
-{
-  "plugins": ["opencode-quota-sidebar"]
-}
-```
-
-OpenCode installs configured package plugins on startup.
+4. **Restart OpenCode.**
 
 ### From a local checkout
 
 ```sh
 cd /path/to/opencode-quota-sidebar
-npm install
-npm run build
+npm install && npm run build
 ```
 
 Then point `cli.json` at the checkout:
@@ -82,104 +63,39 @@ Then point `cli.json` at the checkout:
 }
 ```
 
-OpenCode's local file loader can also transform the TypeScript source directly,
-so `file:///absolute/path/to/opencode-quota-sidebar/tui.tsx` works without a
-build step while developing.
+## What OpenCode must provide
 
-### As a discovered local plugin
-
-Copy `src/tui.tsx` to `~/.config/opencode/plugins/quota/tui.tsx` and put a
-`package.json` with `"exports": { "./tui": "./tui.tsx" }` beside it. OpenCode
-loads discovered plugins automatically.
-
-Restart OpenCode after installing.
-
-## Credit balance login
-
-The Zen/Go balance has **no official API** and the Go API key cannot read billing
-(it returns `403`). The console requires an OAuth session, so this plugin uses
-the console's **device-code login**:
-
-1. In the TUI, run **`/quota-login`** (also in the command palette as
-   *Quota: sign in to view credits*).
-2. A dialog shows a URL and a code. Open the URL, sign in with Google/GitHub,
-   and approve.
-3. The plugin stores the refresh token locally and refreshes access tokens
-   automatically. The sidebar then shows `credit  $X.XX`.
-
-Before login the row reads `credit  login`; if the session is revoked it reads
-`credit  re-login`.
-
-## How it works
-
-| Value | Source | Auth |
+| Sidebar data | Required | Where it comes from |
 | --- | --- | --- |
-| Tokens + cost | `client.session.stats({ from, to, tools: "none" })` (message-level, calendar month) | server |
-| Go quota | `GET https://opencode.ai/zen/go/v1/usage` | Go API key |
-| Zen credits | `GET https://console.opencode.ai/api/billing/status` | console OAuth (device login) |
+| Tokens + cost | connected server | `client.session.stats` for the calendar month — no setup |
+| Go quota | OpenCode Go API key | `OPENCODE_GO_API_KEY` / `OPENCODE_API_KEY`, else the `opencode-go` credential in `~/.local/share/opencode/opencode.db` (written by `opencode auth login`), else a legacy `auth.json` in `~/.local/share/opencode/` or `~/.config/opencode/` |
+| Zen credits | OpenCode Console session | `/quota-login` (device-code flow), token stored in `$XDG_STATE_HOME/opencode/quota-sidebar/auth.json` — default `~/.local/state/opencode/quota-sidebar/auth.json` |
 
-The Go API key is resolved from `OPENCODE_GO_API_KEY` / `OPENCODE_API_KEY`, then
-the V2 credential store in `opencode.db`, then a legacy `auth.json`. No
-configuration is required if the `opencode-go` provider is already connected.
+Notes:
 
-## Security
-
-- The plugin contains **no credentials** and ships **no secrets**.
-- It never sends data anywhere except OpenCode's own endpoints
-  (`opencode.ai`, `console.opencode.ai`) and the connected OpenCode server.
-- The console OAuth token is stored in a **user-private file**:
-  `$XDG_STATE_HOME/opencode/quota-sidebar/auth.json`
-  (default `~/.local/state/opencode/quota-sidebar/auth.json`), created with mode
-  `0600` in a `0700` directory. On Windows the mode flags are best-effort and
-  the file inherits the user profile's ACLs.
-- To sign out or revoke, delete that file (or remove the plugin).
-- Diagnostics are **off by default**. Set `QUOTA_DEBUG=1` to write
-  `opencode-quota-debug.log` in the system temporary directory (`os.tmpdir()`),
-  created with mode `0600`; it contains only HTTP statuses and the billing
-  response, never tokens.
-
-See [SECURITY.md](./SECURITY.md).
+- If the Go provider is already connected, no key configuration is needed.
+- Before `/quota-login` the row reads `credit login`; if the session is revoked
+  it reads `credit re-login`.
+- Signing out: delete the token file above (or remove the plugin). The OAuth
+  token is stored mode `0600` in a `0700` directory.
 
 ## Configuration
 
 | Variable | Purpose |
 | --- | --- |
 | `OPENCODE_GO_API_KEY` / `OPENCODE_API_KEY` | Override the discovered Go key |
-| `QUOTA_POLL_MS` | Refresh interval in ms. Default `300000` |
-| `QUOTA_DEBUG` | `1` enables the diagnostics log |
-| `XDG_STATE_HOME` | Overrides where the OAuth token file is stored |
+| `QUOTA_POLL_MS` | Refresh interval in ms. Default `300000` (5 min) |
+| `QUOTA_DEBUG` | `1` writes diagnostics to `opencode-quota-debug.log` in the system temp dir (no tokens) |
+| `XDG_STATE_HOME` | Overrides where the console OAuth token file is stored |
 
-## Behavior
+## Notes
 
-- Refreshes every 5 minutes, and ~1.5s after each assistant turn.
+- Refreshes every 5 minutes and ~1.5 s after each assistant turn; reset
+  countdowns (`2h45m`, `1d6h`, `23d23h`) tick every 30 seconds.
+- The usage endpoint reports whole (floored) percentages while the console page
+  rounds raw spend, so a bar can read up to 1% lower than the website.
 - Failures degrade gracefully: `usage: error`, `quota: <reason>`,
   `credit  login | no access | re-login | unreadable`.
-
-## Development
-
-`src/tui.tsx` is the source of truth. The published package ships a precompiled
-`dist/tui.js` because OpenCode's package loader executes TypeScript from
-`node_modules` with the default React JSX transform, which fails with
-`Cannot find package 'react'`. The build compiles the JSX with the Solid
-runtime (`jsxImportSource: "@opentui/solid"`) and leaves
-`@opencode/plugin/tui` and `@opentui/solid/jsx-runtime` external; OpenCode
-provides both at runtime.
-
-```sh
-npm install
-npm run build       # writes dist/tui.js
-npm run typecheck   # optional
-npm pack            # runs the build again via prepack
-```
-
-The runtime layout OpenCode loads:
-
-```text
-opencode-quota-sidebar
-├── dist/tui.js      # compiled entry (exports["./tui"])
-├── src/tui.tsx      # source
-└── tui.tsx          # local-development re-export
-```
 
 ## Uninstall
 
@@ -193,7 +109,14 @@ or
 opencode plugin remove opencode-quota-sidebar
 ```
 
-Then delete `$XDG_STATE_HOME/opencode/quota-sidebar/` (`~/.local/state/opencode/quota-sidebar/`).
+Then delete `$XDG_STATE_HOME/opencode/quota-sidebar/`
+(`~/.local/state/opencode/quota-sidebar/`).
+
+## Security
+
+The plugin ships no credentials and only talks to OpenCode's own endpoints
+(`opencode.ai`, `console.opencode.ai`) and the connected server. See
+[SECURITY.md](./SECURITY.md).
 
 ## License
 

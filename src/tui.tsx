@@ -9,7 +9,9 @@
  *  - OpenCode Go subscription quota: the official usage endpoint
  *    (GET https://opencode.ai/zen/go/v1/usage) authenticated with the Go API
  *    key. Resolved from the environment, the V2 credential store in
- *    `opencode.db`, or a legacy `auth.json`.
+ *    `opencode.db`, or a legacy `auth.json`. Each bar shows the window spend
+ *    and the time left until it resets (e.g. "2h45m"), refreshed every poll
+ *    interval and shortly after each assistant turn.
  *  - Zen credit balance: the console billing API
  *    (GET https://console.opencode.ai/api/billing/status). It needs a console
  *    OAuth session, which is obtained with the console's device-code login
@@ -30,10 +32,13 @@ const OAUTH_SCOPE = "openid profile email offline_access"
 const CONSOLE_ORIGIN = "https://opencode.ai"
 const POLL_MS = Number(process.env.QUOTA_POLL_MS) > 0 ? Number(process.env.QUOTA_POLL_MS) : 5 * 60 * 1000
 const DEBOUNCE_MS = 1500
+const TICK_MS = 30_000
 const MIN_BAR_WIDTH = 4
 const FALLBACK_WIDTH = 8
 const LABEL_WIDTH = 6
 const PCT_WIDTH = 4
+const RESET_WIDTH = 6
+const RESET_GAP = 1
 const MICROCENTS_PER_DOLLAR = 100_000_000
 
 type GoWindow = { status: string; percent: number; resetsAt?: string }
@@ -43,6 +48,8 @@ type Tokens = { access_token?: string; refresh_token?: string; expires_in?: numb
 type QuotaState = {
   ready: boolean
   width: number
+  /** Wall clock used to compute quota reset countdowns between refreshes. */
+  now: number
   tokens: { input: number; output: number; cache: number; reasoning: number }
   cost: number
   quota?: GoQuota
@@ -79,7 +86,7 @@ function dollars(n: number): string {
 
 function barWidth(available: number): number {
   if (!available || available <= 0) return FALLBACK_WIDTH
-  return Math.max(MIN_BAR_WIDTH, available - LABEL_WIDTH - PCT_WIDTH - 1)
+  return Math.max(MIN_BAR_WIDTH, available - LABEL_WIDTH - PCT_WIDTH - 1 - RESET_GAP - RESET_WIDTH)
 }
 
 function barSegments(percent: number, available: number): { filled: number; empty: number } {
@@ -87,6 +94,22 @@ function barSegments(percent: number, available: number): { filled: number; empt
   const p = Math.max(0, Math.min(100, percent))
   const filled = Math.round((p / 100) * width)
   return { filled, empty: Math.max(0, width - filled) }
+}
+
+/** Compact remaining time until a window resets, e.g. "2h45m", "3d4h", "45m".
+ *  At most RESET_WIDTH characters ("31d23h"), so every bar row stays aligned. */
+function formatReset(resetsAt: string | undefined, now: number): string {
+  if (!resetsAt) return ""
+  const at = Date.parse(resetsAt)
+  if (!Number.isFinite(at)) return ""
+  const seconds = Math.max(0, Math.round((at - now) / 1000))
+  const days = Math.floor(seconds / 86400)
+  if (days >= 1) return `${days}d${Math.floor((seconds % 86400) / 3600)}h`
+  const hours = Math.floor(seconds / 3600)
+  if (hours >= 1) return `${hours}h${Math.floor((seconds % 3600) / 60)}m`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes >= 1) return `${minutes}m`
+  return "<1m"
 }
 
 function row(label: string, value: string): string {
@@ -406,11 +429,13 @@ async function fetchBalance(accessToken: string): Promise<number | { error: stri
 
 /** Half-height progress bar. Uses the lower half block so each bar occupies the
  *  bottom half of a terminal cell; the empty upper half of every row is the gap
- *  between bars, giving compact spacing without full blank rows. */
+ *  between bars, giving compact spacing without full blank rows. The remaining
+ *  time until the window resets is shown right after the bar (e.g. "2h45m"). */
 function QuotaLine(props: {
   label: string
   percent: number
   width: number
+  reset: string
   color: any
   track: any
 }) {
@@ -420,6 +445,7 @@ function QuotaLine(props: {
       <text fg={props.track}>{`${props.label.padEnd(LABEL_WIDTH)}${`${Math.round(props.percent)}%`.padStart(PCT_WIDTH)} `}</text>
       {filled > 0 ? <text fg={props.color}>{"▄".repeat(filled)}</text> : null}
       {empty > 0 ? <text fg={props.track}>{"▄".repeat(empty)}</text> : null}
+      <text fg={props.track}>{" ".repeat(RESET_GAP) + props.reset.padEnd(RESET_WIDTH)}</text>
     </box>
   )
 }
@@ -479,6 +505,7 @@ function View(props: {
             <QuotaLine
               label="5h"
               percent={s.quota.rolling.percent}
+              reset={formatReset(s.quota.rolling.resetsAt, s.now)}
               width={s.width}
               color={theme.text.base}
               track={theme.text.muted}
@@ -488,6 +515,7 @@ function View(props: {
             <QuotaLine
               label="week"
               percent={s.quota.weekly.percent}
+              reset={formatReset(s.quota.weekly.resetsAt, s.now)}
               width={s.width}
               color={theme.text.base}
               track={theme.text.muted}
@@ -497,6 +525,7 @@ function View(props: {
             <QuotaLine
               label="month"
               percent={s.quota.monthly.percent}
+              reset={formatReset(s.quota.monthly.resetsAt, s.now)}
               width={s.width}
               color={theme.text.base}
               track={theme.text.muted}
@@ -522,6 +551,7 @@ export default Plugin.define({
       initial: {
         ready: false,
         width: 0,
+        now: Date.now(),
         tokens: { input: 0, output: 0, cache: 0, reasoning: 0 },
         cost: 0,
         hasAuth: false,
@@ -698,16 +728,25 @@ export default Plugin.define({
     })()
     const interval = setInterval(() => void refreshAll(), POLL_MS)
 
-    // Refresh usage shortly after the assistant finishes a turn.
-    const scheduleStats = () => {
+    // Keep the reset countdowns moving between refreshes.
+    const tick = setInterval(() => {
+      if (disposed) return
+      setState((s) => {
+        s.now = Date.now()
+      })
+    }, TICK_MS)
+
+    // Refresh usage and quota shortly after the assistant finishes a turn, so
+    // the bars track usage instead of waiting for the next poll.
+    const scheduleRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer)
-      refreshTimer = setTimeout(() => void refreshStats(), DEBOUNCE_MS)
+      refreshTimer = setTimeout(() => void refreshAll(), DEBOUNCE_MS)
     }
     const stops = [
-      ctx.data.on("session.execution.succeeded", scheduleStats),
-      ctx.data.on("session.execution.failed", scheduleStats),
-      ctx.data.on("session.execution.interrupted", scheduleStats),
-      ctx.data.on("session.idle", scheduleStats),
+      ctx.data.on("session.execution.succeeded", scheduleRefresh),
+      ctx.data.on("session.execution.failed", scheduleRefresh),
+      ctx.data.on("session.execution.interrupted", scheduleRefresh),
+      ctx.data.on("session.idle", scheduleRefresh),
     ]
 
     const disposeCommand = ctx.ui.slot({
@@ -738,6 +777,7 @@ export default Plugin.define({
     return () => {
       disposed = true
       clearInterval(interval)
+      clearInterval(tick)
       if (refreshTimer) clearTimeout(refreshTimer)
       for (const stop of stops) stop()
       disposeSlot()
